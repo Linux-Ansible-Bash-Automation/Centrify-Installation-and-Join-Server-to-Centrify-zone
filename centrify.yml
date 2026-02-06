@@ -68,7 +68,7 @@
         mode: "0644"
       when:
         - ansible_facts['os_family'] == 'RedHat'
-        - ansible_facts ['distribution_major_version'] == '7'
+        - ansible_facts['distribution_major_version'] == '7'
 
     - name: Download repo for RHEL 8 
       get_url:
@@ -184,7 +184,7 @@
       command: >
         adjoin
         --user {{ domain_join_user }}
-        -zone {{ domain_join_zone }}
+        --zone {{ domain_join_zone }}
         --name {{ ansible_facts['fqdn'] }}
         {% if ad_server | length > 0 %} --server {{ ad_server }} {% endif %}
         --password {{ join_password }}
@@ -206,8 +206,8 @@
         --forceDeleteObj
         --password {{ domain_join_password | default(ansible_password) }}
         {{ ad_domain }}
-      register: adjoin_cmd_force
-      changed_when: adjoin_cmd_force.rc == 0
+      register: adjoin_force_cmd
+      changed_when: adjoin_force_cmd.rc == 0
       when:
         - do_ad_join
         - "'Joined to domain' not in (adinfo_result.stdout | default(''))"
