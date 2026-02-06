@@ -1,0 +1,222 @@
+---
+- name: Install Centrifydc and Join Server to AD
+  hosts: '*'
+  become: yes
+  become_method: "{{ play_become_method | default('sudo') }}"
+  become_user: root 
+  gather_facts: true
+  
+  vars:
+    ansible_remote_tmp: /tmp/.ansible-${USER}
+    repo_host: "Sandy010.AlmaLinux.sandyvm.com"
+    
+    # ===== AD join controls =====
+    do_ad_join: true 
+    domain_join_user: "domain_join_user" 
+    domain_join_password: "domain_join_password"
+    domain_join_zone: "domain_join_zone"
+    ad_domain: "ad_domain" 
+    ad_server: ""
+  
+  pre_tasks:
+    - name: Ensure sticky bit is set on /tmp 
+      ansible.builtin.file:
+        path: /tmp
+        state: directory 
+        mode: "1777"
+
+    - name: Refresh apt cache 
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_facts.os_family == "Debian"
+      ignore_errors: true
+
+    - name: Ensure certutil package is installed (Debian) 
+      ansible.builtin.apt:
+        name: libnss3-tools
+        state: present
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Ensure certutil package is installed (RedHat7 and below) 
+      ansible.builtin.yum:
+        name: nss-tools
+        state: present
+      when:
+        - ansible_os_family == "RedHat"
+        - (ansible_facts.distribution_major_version | int) < 8
+
+    - name: Ensure certutil package is installed (RedHat8 and above) 
+      ansible.builtin.dnf:
+        name: nss-tools
+        state: present
+      when:
+        - ansible_os_family == "RedHat"
+        - (ansible_facts.distribution_major_version | int) >= 8
+
+    - name: Verify certutil is available
+      ansible.builtin.command: bash -lc 'command -v certutil'
+      register: certutil_path
+      changed_when: false
+      failed_when: certutil_path.rc != 0
+
+  tasks:
+    - name: Download repo for RHEL 7 
+      get_url:
+        url: "http://{{ repo_host }}/configs/rhel7-delinea.repo"
+        dest: "/etc/yum.repos.d/rhel7-delinea.repo"
+        mode: "0644"
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - ansible_facts ['distribution_major_version'] == '7'
+
+    - name: Download repo for RHEL 8 
+      get_url:
+        url: "http://{{ repo_host }}/configs/rhel8-delinea.repo"
+        dest: "/etc/yum.repos.d/rhel8-delinea.repo"
+        mode: "0644"
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - ansible_facts['distribution_major_version'] == '8'
+
+    - name: Download repo for RHEL 9 
+      get_url:
+        url: "http://{{ repo_host }}/configs/rhel9-delinea.repo"
+        dest: "/etc/yum.repos.d/rhel9-delinea.repo"
+        mode: "0644"
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - ansible_facts['distribution_major_version'] == '9'
+
+    - name: Download repo for Ubuntu 18 
+      get_url:
+        url: "http://{{ repo_host }}/configs/ubuntu18-delinea.list"
+        dest: "/etc/apt/sources.list.d/ubuntu18-delinea.list"
+        mode: "0644"
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - ansible_facts['distribution_version'] is match('^18')
+
+    - name: Download repo for Ubuntu 20 
+      get_url:
+        url: "http://{{ repo_host }}/configs/ubuntu20-delinea.list"
+        dest: "/etc/apt/sources.list.d/ubuntu20-delinea.list"
+        mode: "0644"
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - ansible_facts['distribution_version'] is match('^20')
+
+    - name: Download repo for Ubuntu 22 
+      get_url:
+        url: "http://{{ repo_host }}/configs/ubuntu22-delinea.list"
+        dest: "/etc/apt/sources.list.d/ubuntu22-delinea.list"
+        mode: "0644"
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - ansible_facts['distribution_version'] is match('^22')
+
+    - name: Download repo for Ubuntu 24 
+      get_url:
+        url: "http://{{ repo_host }}/configs/ubuntu24-delinea.list"
+        dest: "/etc/apt/sources.list.d/ubuntu24-delinea.list"
+        mode: "0644"
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - ansible_facts['distribution_version'] is match('^24')
+
+    - name: Update package cache (apt)
+      apt:
+        update_cache: yes
+      when: ansible_facts['pkg_mgr'] == 'apt'
+      ignore_errors: true
+
+    - name: Update package cache (dnf)
+      dnf :
+        update_cache: yes
+      when: ansible_facts['pkg_mgr'] == 'dnf'
+      ignore_errors: true
+      
+    - name: Update package cache (yum)
+      yum:
+        update_cache: yes
+      when: ansible_facts['pkg_mgr'] == 'yum'
+      ignore_errors: true
+      
+    - name: Install centrifydc package (Ubuntu)
+      package:
+        name: centrifydc
+        state: present
+      when: ansible_os_family == "Debian"
+      
+    - name: Install CnetrifyDC package (RedHat)
+      package:
+        name: CentrifyDC
+        state: present
+      when: ansible_os_family == "RedHat"
+      
+    - name: Enable Centrify service 
+      service:
+        name: centrifydc
+        enabled: yes
+
+    - name: Check DNS A record for FQDN
+      command: "dig +short A {{ ansible_facts['fqdn'] | trim }}"
+      register: dns_check
+      changed_when: false
+      ignore_errors: true
+
+    - name: Show DNS check result 
+      debug:
+        msg: >-
+          DNS A record {{ 'FOUND' if dns_check.stdout | trim | length > 0 else 'NOT FOUND' }} for {{ ansible_facts['fqdn'] | trim }}.
+          Output: {{ dns_check.stdout | default('') }}
+      
+    - name: Check AD join status
+      when: do_ad_join
+      command: adinfo
+      register: adinfo_result
+      changed_when: false
+      failed_when: false
+
+    - name: Join AD zone
+      vars:
+        join_password: "{{ domain_join_password | default(ansible_password) }}"
+      command: >
+        adjoin
+        --user {{ domain_join_user }}
+        -zone {{ domain_join_zone }}
+        --name {{ ansible_facts['fqdn'] }}
+        {% if ad_server | length > 0 %} --server {{ ad_server }} {% endif %}
+        --password {{ join_password }}
+        {{ ad_domain }}
+      register: adjoin_cmd
+      changed_when: adjoin_cmd.rc == 0
+      failed_when: adjoin_cmd.rc not in [0, 22] 
+      when:
+        - do_ad_join
+        - "'Joined to domain' not in (adinfo_result.stdout | default(''))"
+      no_log: true
+
+    - name: Join AD Zone (force delete existing object)
+      command: >
+        adjoin
+        --user {{ domain_join_user }}
+        --zone {{ domain_join_zone }}
+        --name {{ ansible_facts['hostname'] }}
+        --forceDeleteObj
+        --password {{ domain_join_password | default(ansible_password) }}
+        {{ ad_domain }}
+      register: adjoin_cmd_force
+      changed_when: adjoin_cmd_force.rc == 0
+      when:
+        - do_ad_join
+        - "'Joined to domain' not in (adinfo_result.stdout | default(''))"
+        - adjoin_cmd.rc == 22
+      no_log: true
+      
+    - name: Restart Centrify service after AD join
+      service:
+        name: centrifydc
+        state: restarted
+      when: 
+        - do_ad_join
